@@ -18,13 +18,13 @@
   "content_scripts": [
     {
       "matches": ["https://www.youtube.com/*"],
-      "js": ["content/common.js", "content/youtube.js"],
+      "js": ["content/common.js", "content/modal.js", "content/youtube.js"],
       "css": ["styles/words.css"],
       "run_at": "document_idle"
     },
     {
       "matches": ["https://www.netflix.com/*"],
-      "js": ["content/common.js", "content/netflix.js"],
+      "js": ["content/common.js", "content/modal.js", "content/netflix.js"],
       "css": ["styles/words.css"],
       "run_at": "document_idle"
     }

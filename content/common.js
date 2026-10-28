@@ -13,8 +13,7 @@ const WORD_REGEX = /[\p{L}\p{N}]+(?:['’-][\p{L}\p{N}]+)*/gu;
 // Tiempo durante el que un clic "huérfano" se asocia a la última palabra pulsada.
 const PRESS_MEMORY_MS = 600;
 
-// Datos del último clic. Se usarán más adelante para reanudar el video al cerrar el modal.
-let lastLookup = null;
+// Número de la última búsqueda: si llegan respuestas viejas, se ignoran.
 let lookupCounter = 0;
 
 // ---------------------------------------------------------------------------
@@ -125,6 +124,9 @@ function findWordSpanAtPoint(x, y) {
 // La palabra sobre la que ocurrió el evento: primero se mira el elemento
 // pulsado y, si el sitio lo permite (site.findWordAt), lo que hay debajo.
 function getWordSpan(event, site) {
+  // Los clics dentro del modal nunca son clics en palabras (aunque haya una
+  // palabra justo debajo del modal)
+  if (isEventFromWordModal(event)) return null;
   const direct = event.target instanceof Element ? event.target.closest('.' + WORD_CLASS) : null;
   if (direct) return direct;
   return site.findWordAt ? site.findWordAt(event.clientX, event.clientY) : null;
@@ -138,11 +140,12 @@ function setupHoverHitTest(site) {
   let frameId = 0;
 
   window.addEventListener('pointermove', (event) => {
-    lastEvent = event;
+    // composedPath() solo funciona durante el evento: se calcula ya
+    lastEvent = { clientX: event.clientX, clientY: event.clientY, insideModal: isEventFromWordModal(event) };
     if (frameId) return;
     frameId = requestAnimationFrame(() => {
       frameId = 0;
-      const span = site.findWordAt(lastEvent.clientX, lastEvent.clientY);
+      const span = lastEvent.insideModal ? null : site.findWordAt(lastEvent.clientX, lastEvent.clientY);
       if (span === hoveredSpan) return;
       hoveredSpan?.classList.remove(WORD_HOVER_CLASS);
       span?.classList.add(WORD_HOVER_CLASS);
@@ -161,11 +164,15 @@ function setupHoverHitTest(site) {
 function setupWordClicks(site) {
   if (site.findWordAt) setupHoverHitTest(site);
 
-  // Recuerda la última palabra pulsada. Si el subtítulo se redibuja entre el
-  // "pulsar" y el "soltar", el clic ya no llega al span; así no se pierde.
-  let lastPress = null;
+  // Palabra pulsada que todavía espera su "click". Si el subtítulo se
+  // redibuja entre pulsar y soltar, el click ya no llega al span; así no se
+  // pierde. Se olvida en cuanto se usa o se pulsa en otro sitio.
+  let pendingPress = null;
+  // Momento de la última pulsación en una palabra (para bloquear su
+  // "soltar" y un posible doble clic)
+  let lastWordPressTime = 0;
 
-  const isRecentPress = () => lastPress && Date.now() - lastPress.time < PRESS_MEMORY_MS;
+  const isRecent = (time) => Date.now() - time < PRESS_MEMORY_MS;
 
   // Impide que YouTube/Netflix reciban el evento (pausar, arrastrar el
   // subtítulo, pantalla completa con doble clic, etc.)
@@ -179,46 +186,67 @@ function setupWordClicks(site) {
   for (const type of ['pointerdown', 'mousedown']) {
     window.addEventListener(type, (event) => {
       const span = getWordSpan(event, site);
-      if (!span) return;
+      if (!span) {
+        // Pulsación fuera de las palabras: empieza otro gesto
+        if (type === 'pointerdown') pendingPress = null;
+        return;
+      }
       swallow(event);
-      lastPress = { word: span.textContent, sentence: site.getSentence(span), time: Date.now() };
+      lastWordPressTime = Date.now();
+      pendingPress = {
+        word: span.textContent,
+        sentence: site.getSentence(span),
+        rect: span.getBoundingClientRect(),
+        time: lastWordPressTime
+      };
     }, true);
   }
 
   for (const type of ['pointerup', 'mouseup', 'dblclick']) {
     window.addEventListener(type, (event) => {
-      if (getWordSpan(event, site) || isRecentPress()) swallow(event);
+      if (isEventFromWordModal(event)) return;
+      if (getWordSpan(event, site) || isRecent(lastWordPressTime)) swallow(event);
     }, true);
   }
 
   window.addEventListener('click', (event) => {
+    if (isEventFromWordModal(event)) return;
     const span = getWordSpan(event, site);
-    if (!span && !isRecentPress()) return;
+    const press = pendingPress && isRecent(pendingPress.time) ? pendingPress : null;
+    pendingPress = null;
+    if (!span && !press) return;
     swallow(event);
 
-    const word = span ? span.textContent : lastPress.word;
-    const sentence = span ? site.getSentence(span) : lastPress.sentence;
-    handleWordClick(word, sentence, site.getVideo(span));
+    handleWordClick({
+      word: span ? span.textContent : press.word,
+      sentence: span ? site.getSentence(span) : press.sentence,
+      video: site.getVideo(span),
+      anchorSpan: span,
+      anchorRect: span ? span.getBoundingClientRect() : press.rect
+    });
   }, true);
 }
 
-// Pausa el video y pide la información de la palabra al service worker.
-async function handleWordClick(word, sentence, video) {
-  const wasPlaying = Boolean(video && !video.paused);
+// Pausa el video, abre el modal en "cargando" y pide la información de la
+// palabra al service worker.
+async function handleWordClick({ word, sentence, video, anchorSpan, anchorRect }) {
+  // Solo se usa pause(): nunca se toca currentTime (Netflix lo detecta)
+  const pausedNow = Boolean(video && !video.paused);
   if (video) video.pause();
-  lastLookup = { word, sentence, wasPlaying };
+  openWordModal({ word, sentence, video, pausedNow, anchorSpan, anchorRect });
 
   // Si se hacen varios clics seguidos, solo cuenta la respuesta del último
   const requestId = ++lookupCounter;
-  console.log('[Lua] Buscando:', word, '| Frase:', sentence);
 
   try {
     const result = await chrome.runtime.sendMessage({ type: 'LOOKUP', word, sentence });
     if (requestId !== lookupCounter) return;
-    console.log('[Lua] Resultado:', result);
+    showWordModalResult(result);
   } catch (error) {
     // Pasa sobre todo si se recargó la extensión sin recargar la página
-    console.warn('[Lua] No se pudo contactar con la extensión. Recarga la página (F5).', error.message);
+    if (requestId !== lookupCounter) return;
+    console.warn('[Lua] No se pudo contactar con la extensión:', error.message);
+    showWordModalError('extension');
   }
 }
 

@@ -351,25 +351,31 @@ function buildEmptyResult(word) {
     audioUrl: null,
     translation: null,
     meanings: [],
-    errors: { dictionary: null, translation: null }
+    // Mensaje legible y código de cada error (NOT_FOUND, NETWORK, TIMEOUT,
+    // QUOTA, HTTP, NO_TRANSLATION, INVALID, UNEXPECTED) para que el modal
+    // pueda elegir qué mostrar.
+    errors: { dictionary: null, translation: null },
+    errorCodes: { dictionary: null, translation: null }
   };
+}
+
+// Devuelve un resultado vacío con el mismo error en ambas partes
+function buildFailedResult(message, code) {
+  const result = buildEmptyResult(null);
+  result.errors.dictionary = result.errors.translation = message;
+  result.errorCodes.dictionary = result.errorCodes.translation = code;
+  return result;
 }
 
 // Busca una palabra en ambas APIs a la vez. Nunca lanza errores: si algo
 // falla, lo indica en result.errors y devuelve lo que sí se haya obtenido.
 async function lookupWord(rawWord) {
   if (typeof rawWord !== 'string' || rawWord.length > MAX_WORD_LENGTH) {
-    const result = buildEmptyResult(null);
-    result.errors.dictionary = result.errors.translation = 'Palabra no válida.';
-    return result;
+    return buildFailedResult('Palabra no válida.', 'INVALID');
   }
 
   const word = normalizeWord(rawWord);
-  if (!word) {
-    const result = buildEmptyResult(null);
-    result.errors.dictionary = result.errors.translation = 'Palabra no válida.';
-    return result;
-  }
+  if (!word) return buildFailedResult('Palabra no válida.', 'INVALID');
 
   const cached = getFromCache(word);
   if (cached) return cached;
@@ -386,12 +392,14 @@ async function lookupWord(rawWord) {
     Object.assign(result, dictionaryOutcome.value);
   } else {
     result.errors.dictionary = dictionaryOutcome.reason.message;
+    result.errorCodes.dictionary = dictionaryOutcome.reason.code || 'UNEXPECTED';
   }
 
   if (translationOutcome.status === 'fulfilled') {
     result.translation = translationOutcome.value;
   } else {
     result.errors.translation = translationOutcome.reason.message;
+    result.errorCodes.translation = translationOutcome.reason.code || 'UNEXPECTED';
   }
 
   // Solo se guarda en caché si no hubo fallos temporales (red, timeout,
@@ -416,9 +424,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   lookupWord(message.word)
     .then(sendResponse)
     .catch((error) => {
-      const result = buildEmptyResult(null);
-      result.errors.dictionary = result.errors.translation = `Error inesperado: ${error.message}`;
-      sendResponse(result);
+      sendResponse(buildFailedResult(`Error inesperado: ${error.message}`, 'UNEXPECTED'));
     });
 
   // true = "responderé más tarde". Sin esto, Chrome cierra el canal antes
