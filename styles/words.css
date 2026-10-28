@@ -14,7 +14,16 @@
   transition: text-decoration-color 0.12s ease;
 }
 
-/* currentColor = el color del subtítulo, al 60 % de opacidad */
-.swt-word:hover {
+/* currentColor = el color del subtítulo, al 60 % de opacidad.
+   .swt-word-hover es el hover "a mano" que usa Netflix cuando una capa
+   tapa los subtítulos y el :hover normal no funciona. */
+.swt-word:hover,
+.swt-word.swt-word-hover {
   text-decoration-color: color-mix(in srgb, currentColor 60%, transparent);
+}
+
+/* Cursor de mano mientras el puntero está sobre una palabra tapada por una capa */
+html.swt-pointer-cursor,
+html.swt-pointer-cursor * {
+  cursor: pointer !important;
 }

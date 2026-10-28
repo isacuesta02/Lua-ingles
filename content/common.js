@@ -3,6 +3,8 @@
 // funciones definidas aquí están disponibles en esos archivos.
 
 const WORD_CLASS = 'swt-word';
+const WORD_HOVER_CLASS = 'swt-word-hover';
+const POINTER_CURSOR_CLASS = 'swt-pointer-cursor';
 
 // Una "palabra": letras/números, con apóstrofos o guiones internos opcionales
 // (don't, John's, well-known). La puntuación de alrededor queda fuera del span.
@@ -93,6 +95,15 @@ function createCaptionObserver(segmentSelector) {
       console.log('[Lua] Vigilando subtítulos en', container);
     },
 
+    // Deja de vigilar (p. ej. al salir de la página del video)
+    detach() {
+      if (!observer) return;
+      observer.disconnect();
+      observer = null;
+      currentContainer = null;
+      console.log('[Lua] Vigilancia de subtítulos detenida');
+    },
+
     get container() {
       return currentContainer;
     }
@@ -103,15 +114,53 @@ function createCaptionObserver(segmentSelector) {
 // Clics en las palabras
 // ---------------------------------------------------------------------------
 
-function getWordSpan(target) {
-  return target instanceof Element ? target.closest('.' + WORD_CLASS) : null;
+// Busca una palabra nuestra en un punto de la pantalla, aunque haya capas
+// encima (elementsFromPoint devuelve TODOS los elementos en ese punto, no solo
+// el de arriba). Sirve en sitios como Netflix, donde una capa invisible tapa
+// los subtítulos.
+function findWordSpanAtPoint(x, y) {
+  return document.elementsFromPoint(x, y).find((el) => el.classList.contains(WORD_CLASS)) || null;
+}
+
+// La palabra sobre la que ocurrió el evento: primero se mira el elemento
+// pulsado y, si el sitio lo permite (site.findWordAt), lo que hay debajo.
+function getWordSpan(event, site) {
+  const direct = event.target instanceof Element ? event.target.closest('.' + WORD_CLASS) : null;
+  if (direct) return direct;
+  return site.findWordAt ? site.findWordAt(event.clientX, event.clientY) : null;
+}
+
+// Hover "a mano" para cuando una capa tapa los subtítulos y el :hover de CSS
+// no llega a las palabras. Se comprueba como mucho una vez por fotograma.
+function setupHoverHitTest(site) {
+  let hoveredSpan = null;
+  let lastEvent = null;
+  let frameId = 0;
+
+  window.addEventListener('pointermove', (event) => {
+    lastEvent = event;
+    if (frameId) return;
+    frameId = requestAnimationFrame(() => {
+      frameId = 0;
+      const span = site.findWordAt(lastEvent.clientX, lastEvent.clientY);
+      if (span === hoveredSpan) return;
+      hoveredSpan?.classList.remove(WORD_HOVER_CLASS);
+      span?.classList.add(WORD_HOVER_CLASS);
+      // Cursor de mano en toda la página mientras se está sobre una palabra
+      document.documentElement.classList.toggle(POINTER_CURSOR_CLASS, Boolean(span));
+      hoveredSpan = span;
+    });
+  }, { capture: true, passive: true });
 }
 
 // Engancha los clics en las palabras. "site" indica cómo obtener, en cada
 // sitio, el video y la frase completa:
-//   site.getVideo(span)    → elemento <video> (span puede ser null)
-//   site.getSentence(span) → texto completo del subtítulo
+//   site.getVideo(span)      → elemento <video> (span puede ser null)
+//   site.getSentence(span)   → texto completo del subtítulo
+//   site.findWordAt(x, y)    → (opcional) palabra en ese punto aunque esté tapada
 function setupWordClicks(site) {
+  if (site.findWordAt) setupHoverHitTest(site);
+
   // Recuerda la última palabra pulsada. Si el subtítulo se redibuja entre el
   // "pulsar" y el "soltar", el clic ya no llega al span; así no se pierde.
   let lastPress = null;
@@ -129,7 +178,7 @@ function setupWordClicks(site) {
   // va antes que cualquier manejador del reproductor.
   for (const type of ['pointerdown', 'mousedown']) {
     window.addEventListener(type, (event) => {
-      const span = getWordSpan(event.target);
+      const span = getWordSpan(event, site);
       if (!span) return;
       swallow(event);
       lastPress = { word: span.textContent, sentence: site.getSentence(span), time: Date.now() };
@@ -138,12 +187,12 @@ function setupWordClicks(site) {
 
   for (const type of ['pointerup', 'mouseup', 'dblclick']) {
     window.addEventListener(type, (event) => {
-      if (getWordSpan(event.target) || isRecentPress()) swallow(event);
+      if (getWordSpan(event, site) || isRecentPress()) swallow(event);
     }, true);
   }
 
   window.addEventListener('click', (event) => {
-    const span = getWordSpan(event.target);
+    const span = getWordSpan(event, site);
     if (!span && !isRecentPress()) return;
     swallow(event);
 
