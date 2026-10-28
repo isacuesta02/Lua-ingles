@@ -1,3 +1,20 @@
 /* Estilos de las palabras clicables dentro de los subtítulos.
-   (Los estilos del modal irán dentro de su Shadow DOM, no aquí.)
-   Por ahora está vacío. */
+   (Los estilos del modal irán dentro de su Shadow DOM, no aquí.) */
+
+/* Solo las palabras reciben clics; el resto del subtítulo sigue igual */
+.swt-word {
+  pointer-events: auto;
+  cursor: pointer;
+  /* Subrayado invisible que se hace visible al pasar el ratón. Usar un
+     subrayado (y no un borde) evita que el texto se mueva. */
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 0.15em;
+  transition: text-decoration-color 0.12s ease;
+}
+
+/* currentColor = el color del subtítulo, al 60 % de opacidad */
+.swt-word:hover {
+  text-decoration-color: color-mix(in srgb, currentColor 60%, transparent);
+}
