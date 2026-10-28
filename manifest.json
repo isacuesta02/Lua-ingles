@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "Lua Word Translator",
+  "version": "0.1.0",
+  "description": "Haz clic en cualquier palabra de los subtítulos en inglés de YouTube y Netflix para ver su traducción al español.",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "background": {
+    "service_worker": "background/service-worker.js"
+  },
+  "host_permissions": [
+    "https://api.dictionaryapi.dev/*",
+    "https://api.mymemory.translated.net/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://www.youtube.com/*"],
+      "js": ["content/common.js", "content/youtube.js"],
+      "css": ["styles/words.css"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.netflix.com/*"],
+      "js": ["content/common.js", "content/netflix.js"],
+      "css": ["styles/words.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}
